@@ -5,12 +5,13 @@ import json
 import re
 import itertools
 
-
 class LMCache:
     def __init__(self, path='lm_cache.lmdb', ttl=10):
         self.env = lmdb.open(path, map_size=15 * 1024 ** 3)  # Set map_size to 15 GB
         self.ttl = ttl
         self.nameservers = itertools.cycle(['1.0.0.1', '1.1.1.1', '8.8.8.8', '208.67.222.222', '208.67.220.220'])
+        self.resolver = dns.resolver.Resolver()
+        self.resolver.nameservers = [next(self.nameservers)]
 
     def get(self, domain):
         with self.env.begin() as txn:
@@ -40,25 +41,22 @@ class LMCache:
         # Sanitize the domain
         domain = re.sub(r'[\'"\\]', '', domain)
         
-        resolver = dns.resolver.Resolver()
-        
-        # Select the next nameserver in the round-robin sequence
-        resolver.nameservers = [next(self.nameservers)]
-        
+        # Check the cache first
         cached_ip = self.get(domain)
         if cached_ip:
             return cached_ip
         
+        # Resolve the domain if not in cache
         try:
             # Resolve 'A' (IPv4) records
-            answers_v4 = resolver.resolve(domain, 'A')
+            answers_v4 = self.resolver.resolve(domain, 'A')
             for ipval in answers_v4:
                 ip = str(ipval)
                 self.set(domain, ip)
                 return ip
             
             # If no IPv4 records found, attempt to resolve 'AAAA' (IPv6) records
-            answers_v6 = resolver.resolve(domain, 'AAAA')
+            answers_v6 = self.resolver.resolve(domain, 'AAAA')
             for ipval in answers_v6:
                 ip = str(ipval)
                 self.set(domain, ip)
